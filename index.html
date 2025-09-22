@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>IdeaMakers — Cattle & Buffalo Identifier (No model)</title>
+  <style>
+    :root{--bg:#f6f8fb;--card:#ffffff;--accent:#2b6cb0}
+    body{font-family:Inter,system-ui,Segoe UI,Arial;margin:0;background:var(--bg);color:#111}
+    header{background:linear-gradient(90deg,#2b6cb0,#4299e1);color:white;padding:18px 20px}
+    h1{margin:0;font-size:20px}
+    .wrap{max-width:980px;margin:22px auto;padding:18px}
+    .card{background:var(--card);border-radius:10px;padding:16px;box-shadow:0 6px 18px rgba(20,30,50,0.06)}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
+    label{display:block;font-size:13px;margin-bottom:6px}
+    input[type=file]{display:block}
+    .thumbs{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    .thumb{width:88px;height:66px;object-fit:cover;border-radius:6px;border:1px solid #ddd}
+    button{background:var(--accent);color:white;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
+    .result{margin-top:12px;padding:12px;border-radius:8px;background:#f0f9ff}
+    small.note{color:#555}
+    .refs-list{max-height:260px;overflow:auto;margin-top:8px;border:1px dashed #eee;padding:8px;border-radius:8px}
+    .ref-item{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+    .ref-item img{width:64px;height:48px;object-fit:cover;border-radius:6px}
+    .ref-item input{flex:1;padding:6px;border-radius:6px;border:1px solid #ddd}
+    .topbar{display:flex;align-items:center;gap:12px}
+    footer{font-size:13px;color:#555;margin-top:12px}
+    .hint{font-size:13px;color:#666}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topbar">
+      <h1>IdeaMakers — Cattle & Buffalo Identifier (No model)</h1>
+      <div style="margin-left:auto;font-size:13px;opacity:0.95">Prototype — template-matching approach</div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="card grid">
+      <section>
+        <h2>1) Upload the image to identify</h2>
+        <label>Target image (photo of animal)</label>
+        <input id="targetFile" type="file" accept="image/*">
+        <div id="targetPreview" style="margin-top:10px"></div>
+
+        <h2 style="margin-top:18px">2) Provide reference images (labeled)</h2>
+        <small class="note">You must supply at least a few reference images for the website to compare. Each reference image needs a short label that includes whether it's a cattle or buffalo and its breed (e.g. "Cattle - Gir" or "Buffalo - Murrah"). This site uses simple image similarity (no ML model) to find the closest reference.</small>
+        <label style="margin-top:8px">Add reference image(s)</label>
+        <input id="refFiles" type="file" accept="image/*" multiple>
+        <div class="refs-list card" id="refsList"></div>
+
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <button id="identifyBtn">Identify (Using image similarity)</button>
+          <button id="downloadBtn" style="background:#2f855a">Download HTML</button>
+          <div style="margin-left:auto" class="hint">Result below — accuracy depends on quality & number of references.</div>
+        </div>
+
+        <div id="result" class="result" style="display:none"></div>
+
+        <footer>
+          <p><strong>Note:</strong> This is a simple prototype that does <em>template-matching</em> (pixel-level similarity) between the uploaded image and your provided reference images. It does <strong>not</strong> use any trained machine learning model — therefore results are only as good as the reference images and the similarity between photos (angle, lighting, background affect results).</p>
+          <p>To improve results: provide several clear reference photos per breed (different poses), preferably cropped to the animal body.</p>
+        </footer>
+      </section>
+
+      <aside>
+        <div style="position:sticky;top:18px">
+          <div style="text-align:center;margin-bottom:10px"><strong>Team</strong><div style="font-size:18px">IdeaMakers</div></div>
+          <div class="card" style="padding:12px">
+            <h3 style="margin-top:0">How it works (short)</h3>
+            <ol>
+              <li>Upload target image.</li>
+              <li>Upload many labeled reference images (your dataset).</li>
+              <li>Click Identify — code resizes images, converts to grayscale, computes pixel difference (MSE) and finds the smallest difference.</li>
+              <li>Label of the most similar reference is shown. Classification (Cattle/Buffalo) is read from the label text.</li>
+            </ol>
+            <p class="hint">This avoids ML models by using simple image comparison. Use it as a demonstration or for small curated datasets.</p>
+          </div>
+
+          <div class="card" style="margin-top:10px;padding:12px">
+            <h3 style="margin:6px 0">Quick hosting tips</h3>
+            <ul style="font-size:13px;margin:6px 0;padding-left:18px">
+              <li>Save this file as <code>index.html</code>.</li>
+              <li>Upload to <strong>GitHub Pages</strong> or any static host (Netlify, Vercel) — it's a single HTML file.</li>
+              <li>Or open locally in a browser for demos (drag & drop file).</li>
+            </ul>
+          </div>
+
+        </div>
+      </aside>
+    </div>
+  </main>
+
+<script>
+// Utility: read file to Image object
+function fileToImage(file){
+  return new Promise((res,rej)=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = reader.result;
+    };
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
+
+const refs = []; // {img, label, filename}
+const refsListEl = document.getElementById('refsList');
+const targetPreview = document.getElementById('targetPreview');
+let targetImage = null;
+
+document.getElementById('refFiles').addEventListener('change', async (e)=>{
+  const files = Array.from(e.target.files);
+  for(const f of files){
+    try{
+      const img = await fileToImage(f);
+      const id = Math.random().toString(36).slice(2,9);
+      const item = {img, label: '', filename: f.name, id};
+      refs.push(item);
+    }catch(err){console.error(err)}
+  }
+  renderRefs();
+});
+
+function renderRefs(){
+  refsListEl.innerHTML = '';
+  refs.forEach((r,idx)=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'ref-item';
+    const img = document.createElement('img'); img.src = r.img.src;
+    const input = document.createElement('input'); input.placeholder = 'Label (e.g. Cattle - Gir or Buffalo - Murrah)'; input.value = r.label;
+    input.addEventListener('input', (e)=>{ refs[idx].label = e.target.value; });
+    const del = document.createElement('button'); del.textContent='X'; del.style.background='#e53e3e'; del.style.padding='6px 8px'; del.style.borderRadius='8px';
+    del.addEventListener('click', ()=>{ refs.splice(idx,1); renderRefs(); });
+    wrap.appendChild(img); wrap.appendChild(input); wrap.appendChild(del);
+    refsListEl.appendChild(wrap);
+  });
+}
+
+// Target image preview
+document.getElementById('targetFile').addEventListener('change', async (e)=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  try{
+    const img = await fileToImage(f);
+    targetImage = img;
+    targetPreview.innerHTML = '';
+    const thumb = document.createElement('img'); thumb.src = img.src; thumb.className='thumb'; targetPreview.appendChild(thumb);
+  }catch(err){console.error(err)}
+});
+
+// Simple image similarity: resize to 128x128, grayscale, compute mean squared error
+function imageToGrayArray(img, size=128){
+  const c = document.createElement('canvas'); c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  // draw covering the canvas while keeping aspect via cover
+  const ar = img.width / img.height;
+  let dw = size, dh = size, sx=0, sy=0, sw=img.width, sh=img.height;
+  if(ar > 1){ // wide
+    // crop left/right
+    const newW = img.height * ar; // original
+  }
+  // simple draw: draw image centered and cover
+  const ratio = Math.max(size/img.width, size/img.height);
+  const nw = img.width * ratio, nh = img.height * ratio;
+  ctx.drawImage(img, (size - nw)/2, (size - nh)/2, nw, nh);
+  const d = ctx.getImageData(0,0,size,size).data;
+  const out = new Float32Array(size*size);
+  for(let i=0, p=0;i<d.length;i+=4,p++){
+    // luminance
+    const v = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+    out[p] = v / 255.0;
+  }
+  return out;
+}
+
+function mse(arrA, arrB){
+  let s=0; for(let i=0;i<arrA.length;i++){ const d = arrA[i]-arrB[i]; s += d*d; } return s/arrA.length;
+}
+
+document.getElementById('identifyBtn').addEventListener('click', async ()=>{
+  const resultEl = document.getElementById('result');
+  resultEl.style.display='none';
+  if(!targetImage){ alert('Please upload a target image first.'); return; }
+  if(refs.length===0){ alert('Please add at least one labeled reference image.'); return; }
+
+  // compute gray arrays
+  const tgtArr = imageToGrayArray(targetImage,128);
+  const scores = [];
+  for(const r of refs){
+    const refArr = imageToGrayArray(r.img,128);
+    const score = mse(tgtArr, refArr);
+    scores.push({label:r.label || r.filename, score});
+  }
+  scores.sort((a,b)=>a.score - b.score); // smaller = more similar
+  const best = scores[0];
+  const second = scores[1];
+
+  // derive classification ('Cattle' or 'Buffalo') from label
+  function classifyFromLabel(lbl){
+    const l = lbl.toLowerCase();
+    if(l.includes('buffalo')) return 'Buffalo';
+    if(l.includes('cow') || l.includes('cattle')) return 'Cattle';
+    // try breed keywords
+    const buffaloBreeds = ['murrah','jafarabadi','nili-ravi','surti']
+    for(const b of buffaloBreeds) if(l.includes(b)) return 'Buffalo';
+    const cattleBreeds = ['gir','sahiwal','tharparkar','holstein','jersey']
+    for(const b of cattleBreeds) if(l.includes(b)) return 'Cattle';
+    return 'Unknown (label unclear)';
+  }
+
+  const classification = classifyFromLabel(best.label);
+
+  resultEl.style.display='block';
+  resultEl.innerHTML = `<strong>Best match:</strong> ${escapeHtml(best.label)} <br><strong>Classification:</strong> ${classification} <br><strong>Similarity score (lower=better):</strong> ${best.score.toFixed(4)}${second? '<br><small>Second best: '+escapeHtml(second.label)+' ('+second.score.toFixed(4)+')</small>':''}`;
+});
+
+// Download the page as HTML file
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  const html = '<!doctype html>\n' + document.documentElement.outerHTML;
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'IdeaMakers-cattle-buffalo-identifier.html'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+function escapeHtml(s){ return s.replace(/[&<>"']/g, (c)=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'":"'" }[c])); }
+</script>
+</body>
+</html>
